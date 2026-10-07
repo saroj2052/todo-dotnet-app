@@ -25,103 +25,97 @@ Open http://localhost:5080. The named volume keeps tasks when the container is r
 
 ## Azure setup (once)
 
-The workflow builds a Linux Docker image, pushes it to Azure Container Registry (ACR),
-and restarts an existing Linux Azure App Service to pull `tasks:latest`. It uses
-ACR credentials to push images, GitHub OIDC to sign in to Azure for the restart,
-and the web app's managed identity to pull images. No publish profile is needed.
+The workflow publishes the .NET 10 app and deploys the published files directly to
+Linux Azure App Service using an App Service publish profile stored in a GitHub
+secret. No ACR, Docker image, registry credentials, or federated OIDC setup is needed.
 
-Install Azure CLI and sign in with `az login`. You need permission to create resources,
-Entra applications, and role assignments. Choose globally unique registry and app names:
+Install Azure CLI and sign in with `az login` for the one-time resource setup.
+You need permission to create and configure App Service resources. The workflow
+targets `tododevday-app`; if you choose a different globally unique app name,
+update `app-name` in [.github/workflows/deploy.yml](.github/workflows/deploy.yml).
 
 ```sh
 SUBSCRIPTION_ID="your-subscription-id"
-RESOURCE_GROUP="task-app-rg"
+RESOURCE_GROUP="RG-NCP-Dev-Days"
 LOCATION="eastus"
-ACR_NAME="youruniquetaskregistry"
-APP_NAME="your-unique-task-app"
-GITHUB_REPO="your-github-user/your-repo"
+APP_NAME="tododevday-app"
 
 az account set --subscription "$SUBSCRIPTION_ID"
 az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
-az acr create --resource-group "$RESOURCE_GROUP" --name "$ACR_NAME" --sku Basic
 az appservice plan create --resource-group "$RESOURCE_GROUP" --name task-plan --is-linux --sku B1
 az webapp create --resource-group "$RESOURCE_GROUP" --plan task-plan --name "$APP_NAME" \
-	--container-image-name mcr.microsoft.com/dotnet/samples:aspnetapp
+	--runtime "DOTNETCORE:10.0"
 az webapp update --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" --https-only true
-az webapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
-	--settings WEBSITES_PORT=8080 WEBSITES_ENABLE_APP_SERVICE_STORAGE=true DataDirectory=/home/data
-
-ACR_ID=$(az acr show --name "$ACR_NAME" --query id -o tsv)
-WEBAPP_PRINCIPAL_ID=$(az webapp identity assign --resource-group "$RESOURCE_GROUP" \
-	--name "$APP_NAME" --query principalId -o tsv)
-az role assignment create --assignee-object-id "$WEBAPP_PRINCIPAL_ID" \
-	--assignee-principal-type ServicePrincipal --role AcrPull --scope "$ACR_ID"
 az webapp config set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
-	--generic-configurations '{"acrUseManagedIdentityCreds":true}'
-az webapp config container set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
-	--container-image-name "$ACR_NAME.azurecr.io/tasks:latest" \
-	--container-registry-url "https://$ACR_NAME.azurecr.io"
+	--startup-file "dotnet TaskApp.dll"
+az webapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
+	--settings DataDirectory=/home/data
 ```
 
-For an existing app, configure this image and registry once before running the
-workflow. The workflow does not change container settings or app settings.
-
-Create the deployment identity and trust the GitHub `production` environment:
+If the app already exists as a Linux container app, skip resource creation and
+switch it to the built-in .NET runtime once. Keep the same resource group and app
+name variables, and back up `/home/data` before changing hosting settings:
 
 ```sh
-CLIENT_ID=$(az ad app create --display-name task-app-github --query appId -o tsv)
-DEPLOY_PRINCIPAL_ID=$(az ad sp create --id "$CLIENT_ID" --query id -o tsv)
-GROUP_ID=$(az group show --name "$RESOURCE_GROUP" --query id -o tsv)
-
-az role assignment create --assignee-object-id "$DEPLOY_PRINCIPAL_ID" \
-	--assignee-principal-type ServicePrincipal --role Contributor --scope "$GROUP_ID"
-az ad app federated-credential create --id "$CLIENT_ID" --parameters "{
-	\"name\": \"github-production\",
-	\"issuer\": \"https://token.actions.githubusercontent.com\",
-	\"subject\": \"repo:$GITHUB_REPO:environment:production\",
-	\"audiences\": [\"api://AzureADTokenExchange\"]
-}"
-
-echo "AZURE_CLIENT_ID=$CLIENT_ID"
-az account show --query '{AZURE_TENANT_ID:tenantId, AZURE_SUBSCRIPTION_ID:id}'
+az webapp config set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
+	--linux-fx-version "DOTNETCORE|10.0" --startup-file "dotnet TaskApp.dll"
+az webapp config appsettings set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
+	--settings DataDirectory=/home/data
 ```
 
-Role assignments can take several minutes to propagate before the first deployment.
-Azure resources incur charges; delete the resource group when it is no longer needed.
+The app will start serving requests after the first successful code deployment.
+
+### Download the publish profile
+
+1. In Azure Portal, open `tododevday-app` and go to **Settings > Configuration > General settings**.
+2. Enable **SCM Basic Auth Publishing Credentials** and save. FTP basic authentication is not required.
+3. Return to **Overview** and select **Download publish profile**.
+
+If download reports "Basic authentication is disabled", check the SCM setting.
+If an organizational Azure policy prevents enabling it, contact your administrator;
+publish-profile deployment requires SCM basic authentication.
+
+The downloaded XML contains deployment credentials. Do not commit it, share it,
+or include it in logs. Reset the publish profile in Azure and replace the GitHub
+secret if the credentials are exposed.
+
+Azure resources incur charges. Delete only resources dedicated to this app when
+they are no longer needed; do not delete a shared resource group.
 
 ## GitHub Actions setup
 
-In the GitHub repository, create an environment named **production** under
-**Settings > Environments**. Add these environment secrets:
+In the GitHub repository, create an environment named **dev** under
+**Settings > Environments**. Add this environment secret:
 
 | Secret | Value |
 | --- | --- |
-| `ACR_USERNAME` | ACR credential username with permission to push to `tasks` |
-| `ACR_PASSWORD` | Password for that ACR credential |
-| `AZURE_CLIENT_ID` | Deployment application's client ID printed above |
-| `AZURE_TENANT_ID` | Azure tenant ID |
-| `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
+| `AZURE_WEBAPP_PUBLISH_PROFILE` | Entire XML content of the publish profile downloaded for `tododevday-app` |
 
-Add these environment variables:
-
-| Variable | Value |
-| --- | --- |
-| `ACR_NAME` | Registry name, without `.azurecr.io` |
-| `AZURE_RESOURCE_GROUP` | Resource group name |
-| `AZURE_WEBAPP_NAME` | App Service name |
+No Azure identity secrets or GitHub environment variables are required by this
+workflow. The App Service name is set directly in the deployment step.
 
 Push to `dev`, or run **Build and deploy** manually from the Actions tab.
 Change the branch in [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
 if your deployment branch is different. Configure environment branch restrictions
 and approvals in GitHub as appropriate.
 
-The app will be available at `https://<app-name>.azurewebsites.net`.
-Each deployment overwrites `tasks:latest` and restarts the app to pull it.
-`/health` is a health endpoint.
+The workflow runs on a GitHub-hosted Ubuntu runner and:
+
+1. Checks out the repository using `actions/checkout@v4`.
+2. Installs the .NET 10 SDK using `actions/setup-dotnet@v4`.
+3. Runs `dotnet publish` in Release mode, writing deployable files to the runner's temporary `task-app` directory.
+4. Uploads those files to `tododevday-app` using `azure/webapps-deploy@v3` and the publish-profile secret.
+
+App Service restarts the app using the configured `dotnet TaskApp.dll` startup
+command. Deployments are serialized by the workflow's concurrency group; an
+active deployment is not cancelled by a new run.
+
+The app is available at https://tododevday-app.azurewebsites.net.
+Use https://tododevday-app.azurewebsites.net/health to check its health.
 
 ## Storage and access
 
-Azure stores the SQLite database under `/home/data` with App Service storage enabled,
+Azure stores the SQLite database under `/home/data` on persistent App Service storage,
 so tasks survive restarts and deployments. Use **one App Service instance** with this
 simple SQLite design; do not scale out. Back up the data directory before deleting
 the app. For multiple instances, use a managed database instead.
