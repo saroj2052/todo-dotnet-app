@@ -1,0 +1,8 @@
+.git
+.github
+bin
+obj
+data
+artifacts
+.env
+README.md

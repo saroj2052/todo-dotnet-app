@@ -1,0 +1,55 @@
+@page
+@model TaskApp.Pages.IndexModel
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" />
+    <link rel="stylesheet" href="/site.css" asp-append-version="true" />
+</head>
+<body>
+    <header class="topbar"><div class="brand"><i class="bi bi-check2-square" aria-hidden="true"></i> Tasks</div><span>Your everyday list</span></header>
+    <main>
+        <div class="heading"><h1>My tasks</h1><span class="count">@Model.Tasks.Count(task => !task.IsComplete) remaining</span></div>
+        <form method="post" asp-page-handler="Save" class="composer">
+            <input type="hidden" asp-for="EditId" />
+            <label asp-for="Title">@(Model.EditId.HasValue ? "Edit task" : "New task")</label>
+            <div class="input-row">
+                <input asp-for="Title" maxlength="200" placeholder="What needs to get done?" autocomplete="off" />
+                <button type="submit" class="primary"><i class="bi @(Model.EditId.HasValue ? "bi-check-lg" : "bi-plus-lg")" aria-hidden="true"></i> @(Model.EditId.HasValue ? "Save" : "Add task")</button>
+                @if (Model.EditId.HasValue)
+                {
+                    <a asp-page="Index" class="cancel">Cancel</a>
+                }
+            </div>
+            <span asp-validation-for="Title" class="validation" role="alert"></span>
+        </form>
+        <section aria-label="Task list" class="task-list">
+            @if (Model.Tasks.Count == 0)
+            {
+                <div class="empty"><i class="bi bi-check2-circle" aria-hidden="true"></i><h2>A fresh start</h2><p>No tasks yet.</p></div>
+            }
+            @foreach (var task in Model.Tasks)
+            {
+                <article class="task @(task.IsComplete ? "complete" : "")">
+                    <form method="post" asp-page-handler="Toggle" asp-route-id="@task.Id">
+                        <button type="submit" class="icon-button status" aria-label="@(task.IsComplete ? "Mark incomplete" : "Mark complete"): @task.Title" title="@(task.IsComplete ? "Mark incomplete" : "Mark complete")" aria-pressed="@task.IsComplete.ToString().ToLowerInvariant()"><i class="bi @(task.IsComplete ? "bi-check-square-fill" : "bi-square")" aria-hidden="true"></i></button>
+                    </form>
+                    <span class="task-title">@task.Title</span>
+                    <div class="actions">
+                        <a asp-page="Index" asp-route-editId="@task.Id" class="icon-button" aria-label="Edit: @task.Title" title="Edit task"><i class="bi bi-pencil" aria-hidden="true"></i></a>
+                        <form method="post" asp-page-handler="Delete" asp-route-id="@task.Id" onsubmit="return confirm('Delete this task?')">
+                            <button type="submit" class="icon-button delete" aria-label="Delete: @task.Title" title="Delete task"><i class="bi bi-trash3" aria-hidden="true"></i></button>
+                        </form>
+                    </div>
+                </article>
+            }
+        </section>
+    </main>
+    <footer>One thing at a time.</footer>
+</body>
+</html>
