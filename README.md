@@ -26,9 +26,9 @@ Open http://localhost:5080. The named volume keeps tasks when the container is r
 ## Azure setup (once)
 
 The workflow builds a Linux Docker image, pushes it to Azure Container Registry (ACR),
-and deploys it to an existing Linux Azure App Service. It uses GitHub OIDC to sign in
-to Azure and the web app's managed identity to pull images. No registry passwords
-or publish profiles are needed.
+and restarts an existing Linux Azure App Service to pull `tasks:latest`. It uses
+ACR credentials to push images, GitHub OIDC to sign in to Azure for the restart,
+and the web app's managed identity to pull images. No publish profile is needed.
 
 Install Azure CLI and sign in with `az login`. You need permission to create resources,
 Entra applications, and role assignments. Choose globally unique registry and app names:
@@ -58,7 +58,13 @@ az role assignment create --assignee-object-id "$WEBAPP_PRINCIPAL_ID" \
 	--assignee-principal-type ServicePrincipal --role AcrPull --scope "$ACR_ID"
 az webapp config set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
 	--generic-configurations '{"acrUseManagedIdentityCreds":true}'
+az webapp config container set --resource-group "$RESOURCE_GROUP" --name "$APP_NAME" \
+	--container-image-name "$ACR_NAME.azurecr.io/tasks:latest" \
+	--container-registry-url "https://$ACR_NAME.azurecr.io"
 ```
+
+For an existing app, configure this image and registry once before running the
+workflow. The workflow does not change container settings or app settings.
 
 Create the deployment identity and trust the GitHub `production` environment:
 
@@ -69,8 +75,6 @@ GROUP_ID=$(az group show --name "$RESOURCE_GROUP" --query id -o tsv)
 
 az role assignment create --assignee-object-id "$DEPLOY_PRINCIPAL_ID" \
 	--assignee-principal-type ServicePrincipal --role Contributor --scope "$GROUP_ID"
-az role assignment create --assignee-object-id "$DEPLOY_PRINCIPAL_ID" \
-	--assignee-principal-type ServicePrincipal --role AcrPush --scope "$ACR_ID"
 az ad app federated-credential create --id "$CLIENT_ID" --parameters "{
 	\"name\": \"github-production\",
 	\"issuer\": \"https://token.actions.githubusercontent.com\",
@@ -92,6 +96,8 @@ In the GitHub repository, create an environment named **production** under
 
 | Secret | Value |
 | --- | --- |
+| `ACR_USERNAME` | ACR credential username with permission to push to `tasks` |
+| `ACR_PASSWORD` | Password for that ACR credential |
 | `AZURE_CLIENT_ID` | Deployment application's client ID printed above |
 | `AZURE_TENANT_ID` | Azure tenant ID |
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID |
@@ -104,13 +110,14 @@ Add these environment variables:
 | `AZURE_RESOURCE_GROUP` | Resource group name |
 | `AZURE_WEBAPP_NAME` | App Service name |
 
-Push to `main`, or run **Build and deploy** manually from the Actions tab.
+Push to `dev`, or run **Build and deploy** manually from the Actions tab.
 Change the branch in [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
 if your deployment branch is different. Configure environment branch restrictions
 and approvals in GitHub as appropriate.
 
 The app will be available at `https://<app-name>.azurewebsites.net`.
-Each deployment uses the commit SHA as its image tag. `/health` is a health endpoint.
+Each deployment overwrites `tasks:latest` and restarts the app to pull it.
+`/health` is a health endpoint.
 
 ## Storage and access
 
