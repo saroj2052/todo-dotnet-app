@@ -14,7 +14,7 @@
 <body>
     <header class="topbar"><div class="brand"><i class="bi bi-check2-square" aria-hidden="true"></i> Tasks</div><span>Your everyday list</span></header>
     <main>
-        <div class="heading"><h1>My tasks</h1><span class="count">@Model.Tasks.Count(task => !task.IsComplete) remaining</span></div>
+        <div class="heading"><h1>Task List</h1><span class="count">@Model.Tasks.Count(task => !task.IsComplete) remaining</span></div>
         <form method="post" asp-page-handler="Save" class="composer">
             <input type="hidden" asp-for="EditId" />
             <label asp-for="Title">@(Model.EditId.HasValue ? "Edit task" : "New task")</label>
